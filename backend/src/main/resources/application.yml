@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: ordenes-compra
+  autoconfigure:
+    exclude:
+      # La app nunca usa AuthenticationManager/UserDetailsService: el login valida contra
+      # UsuarioRepository + BCrypt a mano y emite un JWT propio. Sin este exclude, Boot igual
+      # registra un usuario en memoria con password generada al azar que nunca se usa.
+      - org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ordenes_compra
+    username: app
+    password: app
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        # Flyway es la unica fuente de verdad del esquema; Hibernate solo valida que las
+        # entidades coincidan con lo que Flyway ya aplico, nunca genera ni altera tablas.
+        format_sql: true
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+  jackson:
+    # La API es snake_case tanto en request como en response bodies (ver docs/openapi.yaml);
+    # una estrategia global evita anotar cada DTO a mano y cubre ambas direcciones a la vez.
+    property-naming-strategy: SNAKE_CASE
+  mail:
+    # Mailpit (docker-compose.yml): sin autenticacion ni TLS, solo para verificar visualmente que
+    # el correo se envio, nunca entrega nada de verdad.
+    host: localhost
+    port: 1025
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+
+server:
+  port: 8080
+
+jwt:
+  # Valor de desarrollo local; en despliegue real se sobreescribe con la variable de entorno
+  # JWT_SECRET (ver docker-compose.yml). Debe tener al menos 256 bits para HS256.
+  secret: f6fKYWWOPgljCMem5uTOjQdRT3wg+YO8H4yWPa9y1WVZTzLFiqdIzKjLewVhOizdYh5WRlFvqtZkcXAjKe7zzw==
+  expiration-seconds: 28800
+
+app:
+  cors:
+    allowed-origin: http://localhost:5173

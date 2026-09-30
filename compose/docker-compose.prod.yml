@@ -1,0 +1,18 @@
+# cd compose && cp .env.example .env   (then edit)
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Needs from .env: POSTGRES_PASSWORD, JWT_SECRET, DOMAIN, IMAGE_TAG, DOCKERHUB_USER,
+#                  SMTP_HOST, SMTP_USER, SMTP_PASSWORD (SMTP_PORT defaults to 587)
+services:
+  backend:
+    image: ${DOCKERHUB_USER:?DOCKERHUB_USER is required}/ordenes-backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    environment:
+      SPRING_MAIL_HOST: ${SMTP_HOST:?SMTP_HOST is required}
+      SPRING_MAIL_PORT: ${SMTP_PORT:-587}
+      SPRING_MAIL_USERNAME: ${SMTP_USER:?SMTP_USER is required}
+      SPRING_MAIL_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "true"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "true"
+
+  frontend:
+    image: ${DOCKERHUB_USER:?DOCKERHUB_USER is required}/ordenes-frontend:${IMAGE_TAG:?IMAGE_TAG is required}
+

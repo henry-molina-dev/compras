@@ -1,0 +1,1402 @@
+openapi: 3.0.3
+info:
+  title: API de Órdenes de Compra a Proveedores
+  description: >
+    Contrato de referencia para la implementación del backend. Este archivo es
+    el contrato preciso contra el cual se implementa y se mantiene a mano.
+  version: "2026-09-24"
+  contact:
+    name: Henry Molina
+    url: https://henry-molina.dev/
+servers:
+  - url: http://localhost:8080/api
+    description: Entorno local (Docker Compose)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Sucursales
+  - name: Proveedores
+  - name: Productos
+  - name: Clientes
+  - name: Usuarios
+  - name: Ordenes
+  - name: Auditoria
+  - name: Webhooks
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Autenticación de usuario interno
+      operationId: iniciarSesion
+      description: >
+        Punto de entrada a toda la aplicación: valida usuario y contraseña contra
+        el catálogo interno de usuarios y, si son correctos, entrega el token que
+        el resto de esta API exige en cada petición. Es el único endpoint que no
+        requiere autenticación previa, por razones evidentes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Autenticación exitosa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, enum: [login_response] }
+                  access_token: { type: string }
+                  token_type: { type: string, enum: [Bearer] }
+                  expires_in: { type: integer, description: "segundos hasta expiración" }
+                  rol: { $ref: "#/components/schemas/Rol" }
+        "401":
+          $ref: "#/components/responses/AuthenticationError"
+
+  /sucursales:
+    get:
+      tags: [Sucursales]
+      summary: Listar sucursales
+      operationId: listarSucursales
+      description: >
+        Catálogo de referencia (puntos de venta y su formato) que alimenta los
+        selectores de "sucursal destino" al crear una orden y de "sucursal" al
+        dar de alta un usuario GERENTE_SUCURSAL. Cualquier usuario autenticado
+        puede consultarlo: no expone información sensible y lo necesitan tanto
+        pantallas de Compras como de Administración.
+      responses:
+        "200":
+          description: Listado de sucursales
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Sucursal" }
+    post:
+      tags: [Sucursales]
+      summary: Crear sucursal
+      operationId: crearSucursal
+      description: >
+        Da de alta un punto de venta con su formato, que decide qué categorías
+        de producto se le pueden pedir y si sus órdenes exigen cliente (Venta
+        Directa). Reservado a ADMIN, como el resto de la administración de
+        catálogos.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SucursalRequest" }
+      responses:
+        "201":
+          description: Sucursal creada
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Sucursal" }
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "403":
+          description: El usuario no es ADMIN
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /sucursales/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    put:
+      tags: [Sucursales]
+      summary: Actualizar sucursal
+      operationId: actualizarSucursal
+      description: >
+        Edita el nombre o el formato de una sucursal, o la activa/desactiva
+        mediante el campo activo (una sucursal desactivada no puede elegirse
+        como destino de órdenes nuevas; las órdenes que ya la tienen como
+        destino siguen siendo editables). El formato no se puede cambiar una
+        vez que la sucursal tiene órdenes: 409 con código formato_bloqueado.
+        Para "cambiarlo" se desactiva la sucursal y se crea otra. Reservado a
+        ADMIN.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SucursalRequest" }
+      responses:
+        "200":
+          description: Sucursal actualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Sucursal" }
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "403":
+          description: El usuario no es ADMIN
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: El formato no se puede cambiar porque la sucursal ya tiene órdenes (código formato_bloqueado)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /categorias:
+    get:
+      tags: [Productos]
+      summary: Listar categorías de producto
+      operationId: listarCategorias
+      description: >
+        Catálogo de categorías de producto (herramientas, pinturas, etc.) que
+        alimenta el selector de categoría al dar de alta o editar un producto.
+        Cualquier usuario autenticado puede consultarlo: es información de
+        referencia sin datos sensibles.
+      responses:
+        "200":
+          description: Listado de categorías
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Categoria" }
+
+  /proveedores:
+    get:
+      tags: [Proveedores]
+      summary: Listar proveedores
+      operationId: listarProveedores
+      description: >
+        Catálogo de proveedores disponibles para armar órdenes de compra y si
+        están activos. Disponible para ADMIN y COMPRADOR (el comprador debe
+        poder elegir proveedor al crear una orden). La clave de webhook solo se
+        devuelve a ADMIN; para COMPRADOR el campo webhook_api_key viene nulo,
+        porque quien la conoce puede registrar eventos en nombre del proveedor.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Listado de proveedores
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Proveedor" }
+    post:
+      tags: [Proveedores]
+      summary: Crear proveedor
+      operationId: crearProveedor
+      description: >
+        Da de alta un nuevo proveedor en el catálogo y le genera automáticamente
+        una clave de webhook para que pueda reportar eventos logísticos más
+        adelante. Reservado a ADMIN, como el resto de la administración de
+        catálogos: alta de proveedores es una decisión de negocio, no una
+        operación del día a día de Compras.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProveedorRequest" }
+      responses:
+        "201":
+          description: Proveedor creado
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Proveedor" }
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+
+  /proveedores/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    put:
+      tags: [Proveedores]
+      summary: Actualizar proveedor
+      operationId: actualizarProveedor
+      description: >
+        Edita los datos de contacto de un proveedor existente, o lo
+        activa/desactiva mediante el campo activo (un proveedor desactivado
+        deja de estar disponible para nuevas órdenes). Reservado a ADMIN.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProveedorRequest" }
+      responses:
+        "200":
+          description: Proveedor actualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Proveedor" }
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+
+  /proveedores/{id}/regenerar-clave-webhook:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    patch:
+      tags: [Proveedores]
+      summary: Regenerar la clave de webhook del proveedor
+      operationId: regenerarClaveWebhookProveedor
+      description: >
+        Genera una clave de webhook nueva y devuelve el proveedor con ella. La
+        clave anterior deja de autenticar de inmediato, asi que la nueva debe
+        hacerse llegar al proveedor por un canal aparte. Sirve ante una fuga o
+        para rotarla periodicamente. Reservado a ADMIN.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Clave regenerada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Proveedor" }
+        "403":
+          description: El usuario no es ADMIN
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+
+  /productos:
+    get:
+      tags: [Productos]
+      summary: Listar productos
+      operationId: listarProductos
+      description: >
+        Catálogo de productos que un COMPRADOR recorre para armar el detalle de
+        una orden (con filtro opcional por categoría). Abierto también a ADMIN
+        para las mismas pantallas de administración de catálogos.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: categoria_id
+          in: query
+          schema: { type: integer }
+          description: Filtrar por categoría
+        - name: sucursal_id
+          in: query
+          schema: { type: integer }
+          description: >
+            Devuelve solo los productos cuya categoría está permitida para el
+            formato de esa sucursal, es decir, los que se pueden pedir para ella.
+      responses:
+        "200":
+          description: Listado de productos
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Producto" }
+    post:
+      tags: [Productos]
+      summary: Crear producto
+      operationId: crearProducto
+      description: >
+        Da de alta un nuevo producto en el catálogo, incluida la categoría que
+        determina en qué formatos de sucursal se puede pedir. Reservado a ADMIN:
+        un COMPRADOR elige productos existentes al armar una orden, no define el
+        catálogo.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductoRequest" }
+      responses:
+        "201":
+          description: Producto creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Producto" }
+
+  /productos/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    put:
+      tags: [Productos]
+      summary: Actualizar producto
+      operationId: actualizarProducto
+      description: >
+        Edita los datos de un producto existente (precio, unidades, categoría),
+        o lo activa/desactiva mediante el campo activo. Reservado a ADMIN.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductoRequest" }
+      responses:
+        "200":
+          description: Producto actualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Producto" }
+
+  /clientes:
+    get:
+      tags: [Clientes]
+      summary: Listar clientes
+      operationId: listarClientes
+      description: >
+        Catálogo de clientes finales, obligatorio para elegir uno al crear una
+        orden con sucursal destino de Venta Directa. Abierto a COMPRADOR (quien
+        arma esas órdenes) y a ADMIN (administración de catálogos).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Listado de clientes
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Cliente" }
+    post:
+      tags: [Clientes]
+      summary: Crear cliente
+      operationId: crearCliente
+      description: >
+        Da de alta un nuevo cliente final en el catálogo. Reservado a ADMIN,
+        como el resto del mantenimiento de catálogos.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClienteRequest" }
+      responses:
+        "201":
+          description: Cliente creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cliente" }
+
+  /clientes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    put:
+      tags: [Clientes]
+      summary: Actualizar cliente
+      operationId: actualizarCliente
+      description: >
+        Edita los datos de un cliente existente, o lo activa/desactiva mediante
+        el campo activo. Reservado a ADMIN.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClienteRequest" }
+      responses:
+        "200":
+          description: Cliente actualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cliente" }
+
+  /usuarios:
+    get:
+      tags: [Usuarios]
+      summary: Listar usuarios
+      operationId: listarUsuarios
+      description: >
+        Cuenta con acceso al sistema (rol y, si aplica, sucursal asignada).
+        Exclusivo de ADMIN: es gestión de identidades y permisos, fuera del
+        alcance de cualquier otro rol.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Listado de usuarios
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Usuario" }
+    post:
+      tags: [Usuarios]
+      summary: Crear usuario
+      operationId: crearUsuario
+      description: >
+        Da de alta una nueva cuenta de acceso, asignándole un rol y, si es
+        GERENTE_SUCURSAL, la sucursal a la que queda restringida. Exclusivo de
+        ADMIN.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UsuarioRequest" }
+      responses:
+        "201":
+          description: Usuario creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Usuario" }
+
+  /usuarios/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    put:
+      tags: [Usuarios]
+      summary: Actualizar usuario
+      operationId: actualizarUsuario
+      description: >
+        Edita una cuenta existente (contraseña, rol, sucursal), o la
+        activa/desactiva mediante el campo activo. Exclusivo de ADMIN.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UsuarioRequest" }
+      responses:
+        "200":
+          description: Usuario actualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Usuario" }
+
+  /ordenes:
+    get:
+      tags: [Ordenes]
+      summary: Listar órdenes de compra
+      operationId: listarOrdenes
+      description: >
+        Vista central de trabajo de Compras: todas las órdenes visibles para el
+        usuario autenticado, con filtros y paginación por cursor. Un
+        GERENTE_SUCURSAL ve únicamente las órdenes de su propia sucursal
+        (filtrado automático por el backend según su usuario, no por parámetro
+        del cliente); ADMIN y COMPRADOR ven todas.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: estado
+          in: query
+          schema: { $ref: "#/components/schemas/EstadoOrden" }
+        - name: proveedor_id
+          in: query
+          schema: { type: integer }
+        - name: sucursal_id
+          in: query
+          schema: { type: integer }
+        - name: cliente_id
+          in: query
+          schema: { type: integer }
+        - name: numero_orden
+          in: query
+          schema: { type: string }
+          description: >
+            Busca coincidencia parcial, sin distinguir mayúsculas/minúsculas
+            (ej. "123" encuentra "OC-2026-000123").
+        - name: fecha_desde
+          in: query
+          schema: { type: string, format: date }
+          description: Filtra por fecha_necesaria >= este valor. Se puede usar sola o junto a fecha_hasta.
+        - name: fecha_hasta
+          in: query
+          schema: { type: string, format: date }
+          description: Filtra por fecha_necesaria <= este valor. Se puede usar sola o junto a fecha_desde.
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/StartingAfter"
+        - $ref: "#/components/parameters/Expand"
+      responses:
+        "200":
+          description: Listado paginado de órdenes
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/OrdenCompra" }
+        "400":
+          description: fecha_desde posterior a fecha_hasta
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    post:
+      tags: [Ordenes]
+      summary: Crear orden de compra (estado inicial CREADA)
+      operationId: crearOrden
+      description: >
+        Punto de partida del flujo de Compras: registra una nueva orden con su
+        detalle de productos, valida las reglas de negocio (formato de sucursal
+        vs. categoría permitida, cliente obligatorio en Venta Directa) y calcula
+        el total. Disponible para COMPRADOR, que es quien arma órdenes en el
+        día a día, y ADMIN. Un GERENTE_SUCURSAL no crea órdenes: solo las recibe
+        y las cierra.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrdenCompraRequest" }
+      responses:
+        "201":
+          description: Orden creada
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrdenCompra" }
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+
+  /ordenes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    get:
+      tags: [Ordenes]
+      summary: Detalle de una orden de compra
+      operationId: obtenerOrden
+      description: >
+        Cabecera y detalle completos de una orden puntual. Mismo criterio de
+        visibilidad que el listado: un GERENTE_SUCURSAL solo puede consultar
+        órdenes de su propia sucursal.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Expand"
+      responses:
+        "200":
+          description: Detalle de la orden
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrdenCompra" }
+        "403":
+          description: GERENTE_SUCURSAL intentando acceder a una orden de otra sucursal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      tags: [Ordenes]
+      summary: Modificar el detalle de una orden (solo si está en estado CREADA)
+      operationId: actualizarOrden
+      description: >
+        Corrige las líneas de una orden antes de que avance en su ciclo de
+        vida; una vez aprobada, anulada o cerrada ya no se puede editar (ver
+        respuesta 409). Mismos roles que pueden crear una orden: COMPRADOR y
+        ADMIN.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrdenCompraRequest" }
+      responses:
+        "200":
+          description: Orden actualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrdenCompra" }
+        "409":
+          $ref: "#/components/responses/StateConflictError"
+
+  /ordenes/{id}/aprobar:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    patch:
+      tags: [Ordenes]
+      summary: Transición CREADA → APROBADA (dispara notificación al proveedor)
+      operationId: aprobarOrden
+      description: >
+        Confirma la orden y dispara el correo de notificación al proveedor;
+        solo es válida desde el estado CREADA (ver respuesta 409). La ejecuta
+        quien la creó en primer lugar: COMPRADOR o ADMIN.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Orden aprobada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrdenCompra" }
+        "409":
+          $ref: "#/components/responses/StateConflictError"
+
+  /ordenes/{id}/anular:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    patch:
+      tags: [Ordenes]
+      summary: Transición a ANULADA (requiere motivo; no permitida desde CERRADA)
+      operationId: anularOrden
+      description: >
+        Cancela una orden que ya no se necesita, dejando registrado el motivo
+        para auditoría. No es una acción destructiva a nivel de datos (la orden
+        queda anulada, no se borra) y no se puede aplicar sobre una orden ya
+        CERRADA. Misma autorización que crearla y aprobarla: COMPRADOR o ADMIN.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [motivo]
+              properties:
+                motivo: { type: string, minLength: 1, maxLength: 250 }
+      responses:
+        "200":
+          description: Orden anulada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrdenCompra" }
+        "409":
+          $ref: "#/components/responses/StateConflictError"
+
+  /ordenes/{id}/cerrar:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    patch:
+      tags: [Ordenes]
+      summary: Transición APROBADA → CERRADA (confirma recepción)
+      operationId: cerrarOrden
+      description: >
+        Cierra el ciclo de vida de la orden confirmando si la mercancía llegó
+        conforme o no. Solo válida desde APROBADA (ver respuesta 409). La
+        ejecuta quien recibe físicamente el pedido: el GERENTE_SUCURSAL de la
+        sucursal destino de la orden (nunca de otra), o ADMIN. Un COMPRADOR no
+        puede cerrarla — no es quien recibe la mercancía.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conforme]
+              properties:
+                conforme: { type: boolean }
+                observacion: { type: string, maxLength: 250 }
+      responses:
+        "200":
+          description: Orden cerrada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrdenCompra" }
+        "403":
+          description: Un COMPRADOR, o un GERENTE_SUCURSAL de otra sucursal, no puede ejecutar esta transición
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          $ref: "#/components/responses/StateConflictError"
+
+  /ordenes/{id}/linea-tiempo:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    get:
+      tags: [Ordenes]
+      summary: Historial combinado (auditoría interna + eventos de proveedor), ordenado por fecha
+      operationId: obtenerLineaTiempoOrden
+      description: >
+        Vista de seguimiento pensada para que quien sigue una orden entienda su
+        ciclo de vida completo de un vistazo, sin cruzar dos endpoints
+        distintos: combina los cambios de estado internos con los eventos
+        logísticos que reporta el proveedor. Mismos roles y misma restricción
+        de sucursal para GERENTE_SUCURSAL que ver el detalle de la orden.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Línea de tiempo de la orden
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/LineaTiempoItem" }
+
+  /auditoria/ordenes/{numeroOrden}:
+    parameters:
+      - name: numeroOrden
+        in: path
+        required: true
+        description: >
+          El numero_orden visible en toda la aplicacion (ej. OC-2026-000123),
+          no el id interno de base de datos - es el unico identificador de la
+          orden que un ADMIN conoce de memoria.
+        schema: { type: string, example: "OC-2026-000123" }
+    get:
+      tags: [Auditoria]
+      summary: Historial de transiciones de estado de una orden (solo auditoría interna)
+      operationId: obtenerAuditoriaOrden
+      description: >
+        Bitácora cruda de quién cambió el estado de la orden y cuándo, sin
+        mezclar eventos del proveedor (para eso está la línea de tiempo
+        combinada). Es una herramienta de supervisión/control, no de
+        seguimiento operativo del día a día: exclusiva de ADMIN.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Bitácora de auditoría
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/AuditoriaEvento" }
+
+  /ordenes/importaciones/plantilla:
+    get:
+      tags: [Ordenes]
+      summary: Descargar plantilla Excel para carga masiva de órdenes
+      operationId: descargarPlantillaImportacion
+      description: >
+        Punto de partida para una carga masiva: un .xlsx de ejemplo con la
+        hoja "Ordenes" (columnas exactas que espera el endpoint de
+        importación; la última, precio_unitario, es opcional: vacía usa el
+        precio de catalogo, y con valor se valida contra los limites de
+        negociacion del proveedor igual que en el flujo individual) más
+        hojas de referencia (Proveedores/Sucursales/
+        Clientes/Productos) con listas desplegables, para que el usuario
+        elija un nombre válido en vez de tener que conocer un ID interno.
+        Mismos roles que pueden crear órdenes de forma individual, ya que la
+        carga masiva reutiliza exactamente el mismo servicio y las mismas
+        reglas de negocio.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Archivo .xlsx de plantilla
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+
+  /ordenes/importaciones:
+    post:
+      tags: [Ordenes]
+      summary: Carga masiva de órdenes de compra vía Excel
+      operationId: importarOrdenes
+      description: >
+        Registra varias órdenes de una sola vez para casos de reposición
+        periódica, pedidos recurrentes o migración de datos: agrupa las filas
+        de la hoja "Ordenes" del archivo .xlsx por referencia_lote, resuelve
+        proveedor/sucursal/cliente por nombre y producto por código, arma el
+        mismo OrdenCompraRequest que el flujo individual y reutiliza el mismo
+        servicio de creación de orden, así que ninguna regla de negocio se
+        duplica ni se relaja. Atomicidad por orden (lote), no por archivo
+        completo: un lote inválido se rechaza sin afectar a los demás. Mismos
+        roles que crear una orden individual.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archivo]
+              properties:
+                archivo:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Reporte de resultado de la importación
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportacionLoteResponse" }
+
+  /ordenes/{id}/exportar:
+    parameters:
+      - $ref: "#/components/parameters/IdPathParam"
+    get:
+      tags: [Ordenes]
+      summary: Exportar una orden de compra como PDF
+      operationId: exportarOrdenPdf
+      description: >
+        Genera el documento formal de la orden (cabecera + detalle) para
+        enviar al proveedor, imprimir o archivar. Mismo control de acceso que
+        consultar la orden: GERENTE_SUCURSAL restringido a su propia sucursal.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: formato
+          in: query
+          required: true
+          schema: { type: string, enum: [pdf] }
+      responses:
+        "200":
+          description: Documento PDF de la orden (cabecera + detalle)
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "403":
+          description: GERENTE_SUCURSAL intentando exportar una orden de otra sucursal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /ordenes/exportar:
+    get:
+      tags: [Ordenes]
+      summary: Exportar un reporte Excel de órdenes de compra
+      operationId: exportarOrdenesExcel
+      description: >
+        Reporte tabular para análisis o conciliación externa, con los mismos
+        filtros que el listado. Una fila por línea de producto (no por
+        orden), con los datos de cabecera repetidos en cada fila, para no
+        perder el detalle de qué se compró. Mismos roles y misma restricción
+        de sucursal para GERENTE_SUCURSAL que el listado de órdenes.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: formato
+          in: query
+          required: true
+          schema: { type: string, enum: [xlsx] }
+        - name: estado
+          in: query
+          schema: { $ref: "#/components/schemas/EstadoOrden" }
+        - name: proveedor_id
+          in: query
+          schema: { type: integer }
+        - name: sucursal_id
+          in: query
+          schema: { type: integer }
+        - name: cliente_id
+          in: query
+          schema: { type: integer }
+        - name: numero_orden
+          in: query
+          schema: { type: string }
+        - name: fecha_desde
+          in: query
+          schema: { type: string, format: date }
+        - name: fecha_hasta
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Reporte .xlsx
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        "400":
+          description: fecha_desde posterior a fecha_hasta
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /webhooks/eventos:
+    post:
+      tags: [Webhooks]
+      summary: Registrar un evento logístico reportado por el proveedor
+      operationId: registrarEventoProveedor
+      description: >
+        Punto de integración para que el sistema del proveedor informe el
+        avance de una orden (aceptada, despachada, entregada, etc.), sin
+        depender de que un usuario interno la actualice a mano. Puramente
+        informativo: ningún tipo de evento (incluido ENTREGADA o RECHAZADA)
+        dispara una transición de estado interna de la orden. No usa el JWT
+        del resto de la API: se autentica con la clave propia del proveedor, que
+        identifica al proveedor (la URL no lleva su id). La orden se identifica por
+        su numero_orden, el mismo que el proveedor recibe en el correo de aprobacion;
+        una orden de otro proveedor responde 404 igual que una inexistente.
+      security: [{ apiKeyAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [numero_orden, tipo_evento, fecha_evento]
+              properties:
+                numero_orden: { type: string, maxLength: 20 }
+                tipo_evento: { $ref: "#/components/schemas/TipoEventoProveedor" }
+                observacion: { type: string, maxLength: 250 }
+                fecha_evento: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Evento registrado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EventoProveedor" }
+        "401":
+          description: API key ausente o inválida
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No existe una orden con ese numero_orden para este proveedor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT propio emitido por /auth/login (sin OAuth2)
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: Credencial por proveedor, usada exclusivamente por el endpoint de webhooks
+
+  parameters:
+    IdPathParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string }
+      description: Clave generada por el cliente para evitar reprocesar la misma operación ante reintentos
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, default: 20, maximum: 100 }
+    StartingAfter:
+      name: starting_after
+      in: query
+      schema: { type: string }
+      description: Cursor de paginación (número de orden del último elemento visto)
+    Expand:
+      name: expand
+      in: query
+      schema:
+        type: array
+        items: { type: string }
+      style: form
+      explode: true
+      description: "Relaciones a embeber en la respuesta, ej. ?expand=proveedor&expand=linea_tiempo"
+
+  responses:
+    InvalidRequestError:
+      description: Error de validación de entrada
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    AuthenticationError:
+      description: Credenciales inválidas o token ausente/expirado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFoundError:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    StateConflictError:
+      description: Transición de estado inválida para el estado actual de la orden
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  schemas:
+    Rol:
+      type: string
+      enum: [ADMIN, COMPRADOR, GERENTE_SUCURSAL]
+
+    FormatoSucursal:
+      type: string
+      enum: [FERRETERIA, FERRETERIA_CONSTRUCCION, VENTA_DIRECTA]
+
+    EstadoOrden:
+      type: string
+      enum: [CREADA, APROBADA, ANULADA, CERRADA]
+
+    TipoEventoProveedor:
+      type: string
+      enum: [ACEPTADA, RECHAZADA, PREPARADA, DESPACHADA, ENTREGADA]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [type, code, message]
+          properties:
+            type:
+              type: string
+              enum: [invalid_request_error, authentication_error, state_conflict_error, api_error]
+            code: { type: string, example: categoria_no_permitida }
+            message: { type: string }
+            param: { type: string, nullable: true }
+
+    ListEnvelope:
+      type: object
+      properties:
+        object: { type: string, enum: [list] }
+        has_more: { type: boolean }
+
+    Sucursal:
+      type: object
+      properties:
+        object: { type: string, enum: [sucursal] }
+        id: { type: integer }
+        nombre: { type: string }
+        formato: { $ref: "#/components/schemas/FormatoSucursal" }
+        activo: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Categoria:
+      type: object
+      properties:
+        object: { type: string, enum: [categoria] }
+        id: { type: integer }
+        nombre: { type: string }
+
+    Proveedor:
+      type: object
+      properties:
+        object: { type: string, enum: [proveedor] }
+        id: { type: integer }
+        nombre: { type: string }
+        email: { type: string, format: email }
+        telefono: { type: string, nullable: true }
+        direccion: { type: string, nullable: true }
+        webhook_api_key:
+          type: string
+          nullable: true
+          description: >
+            Generada automaticamente al crear el proveedor. Se entrega al proveedor real fuera de
+            banda. ADMIN puede consultarla via GET y rotarla con
+            PATCH /proveedores/{id}/regenerar-clave-webhook.
+        descuento_maximo_pct:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 99.99
+          description: >
+            Descuento maximo (en porcentaje) que se puede negociar sobre el precio de catalogo de
+            cualquier producto de este proveedor. 0 junto con aumento_maximo_pct = 0 significa que
+            no se negocia (se compra al precio de catalogo).
+        aumento_maximo_pct:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Aumento maximo (en porcentaje) que se acepta sobre el precio de catalogo.
+        activo: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProveedorRequest:
+      type: object
+      required: [nombre, email]
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 150 }
+        email: { type: string, format: email }
+        telefono: { type: string, maxLength: 30 }
+        direccion: { type: string, maxLength: 250 }
+        activo:
+          type: boolean
+          description: Omitido en creacion equivale a true; omitido en edicion preserva el valor actual.
+        descuento_maximo_pct:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 99.99
+          description: Porcentaje maximo de descuento negociable. Omitido en creacion equivale a 0; omitido en edicion preserva el valor actual. Maximo dos decimales.
+        aumento_maximo_pct:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Porcentaje maximo de aumento aceptable. Omitido en creacion equivale a 0; omitido en edicion preserva el valor actual. Maximo dos decimales.
+
+    SucursalRequest:
+      type: object
+      required: [nombre, formato]
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 150 }
+        formato: { $ref: "#/components/schemas/FormatoSucursal" }
+        activo:
+          type: boolean
+          description: Omitido en creacion equivale a true; omitido en edicion preserva el valor actual.
+
+    Producto:
+      type: object
+      properties:
+        object: { type: string, enum: [producto] }
+        id: { type: integer }
+        codigo: { type: string }
+        nombre: { type: string }
+        categoria_id: { type: integer }
+        precio: { type: number, format: double }
+        unidad_venta: { type: string }
+        unidad_compra: { type: string }
+        factor_conversion: { type: number, format: double }
+        activo: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProductoRequest:
+      type: object
+      required: [codigo, nombre, categoria_id, precio, unidad_venta, unidad_compra]
+      properties:
+        codigo: { type: string, maxLength: 30 }
+        nombre: { type: string, minLength: 1, maxLength: 150 }
+        categoria_id: { type: integer }
+        precio: { type: number, format: double, exclusiveMinimum: true, minimum: 0 }
+        unidad_venta: { type: string }
+        unidad_compra: { type: string }
+        factor_conversion: { type: number, format: double, default: 1 }
+        activo:
+          type: boolean
+          description: Omitido en creacion equivale a true; omitido en edicion preserva el valor actual.
+
+    Cliente:
+      type: object
+      properties:
+        object: { type: string, enum: [cliente] }
+        id: { type: integer }
+        nombre: { type: string }
+        tipo: { type: string, enum: [INDUSTRIAL, CONTRATISTA, COMERCIO] }
+        email: { type: string, format: email, nullable: true }
+        activo: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ClienteRequest:
+      type: object
+      required: [nombre, tipo]
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 150 }
+        tipo: { type: string, enum: [INDUSTRIAL, CONTRATISTA, COMERCIO] }
+        email: { type: string, format: email }
+        activo:
+          type: boolean
+          description: Omitido en creacion equivale a true; omitido en edicion preserva el valor actual.
+
+    Usuario:
+      type: object
+      properties:
+        object: { type: string, enum: [usuario] }
+        id: { type: integer }
+        username: { type: string }
+        rol: { $ref: "#/components/schemas/Rol" }
+        sucursal_id: { type: integer, nullable: true }
+        activo: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    UsuarioRequest:
+      type: object
+      required: [username, rol]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 60 }
+        password:
+          type: string
+          format: password
+          minLength: 8
+          description: Obligatorio al crear; en edicion, si se omite se conserva la contraseña actual.
+        rol: { $ref: "#/components/schemas/Rol" }
+        sucursal_id:
+          type: integer
+          nullable: true
+          description: Obligatorio si rol = GERENTE_SUCURSAL
+        activo:
+          type: boolean
+          description: Omitido en creacion equivale a true; omitido en edicion preserva el valor actual.
+
+    DetalleRequest:
+      type: object
+      required: [producto_id, cantidad]
+      properties:
+        producto_id: { type: integer }
+        cantidad: { type: number, format: double, exclusiveMinimum: true, minimum: 0 }
+        precio_unitario:
+          type: number
+          format: double
+          minimum: 0.01
+          description: >
+            Precio unitario negociado (maximo dos decimales). Opcional: omitido, la linea usa el precio de
+            catalogo (o, al editar una orden, el que la linea ya tenia). Debe estar entre
+            catalogo x (1 - descuento_maximo_pct) y catalogo x (1 + aumento_maximo_pct) del proveedor de la
+            orden, ambos extremos incluidos; el catalogo de referencia es el guardado en la linea
+            (precio_catalogo), no el vigente hoy. Fuera de rango responde 400 con codigo precio_fuera_de_rango.
+
+    OrdenCompraDetalle:
+      type: object
+      properties:
+        object: { type: string, enum: [orden_compra_detalle] }
+        id: { type: integer }
+        producto_id: { type: integer }
+        producto_codigo: { type: string }
+        producto_nombre: { type: string }
+        cantidad: { type: number, format: double }
+        precio_unitario: { type: number, format: double }
+        precio_catalogo:
+          type: number
+          format: double
+          description: Precio de catalogo vigente al crear la linea. Si difiere de precio_unitario, la linea se negocio.
+        subtotal: { type: number, format: double }
+
+    OrdenCompraRequest:
+      type: object
+      required: [proveedor_id, sucursal_destino_id, fecha_necesaria, detalle]
+      properties:
+        proveedor_id: { type: integer }
+        sucursal_destino_id: { type: integer }
+        cliente_id:
+          type: integer
+          nullable: true
+          description: Obligatorio si la sucursal destino tiene formato VENTA_DIRECTA
+        fecha_necesaria: { type: string, format: date }
+        detalle:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/DetalleRequest" }
+
+    OrdenCompra:
+      type: object
+      properties:
+        object: { type: string, enum: [orden_compra] }
+        id: { type: integer }
+        numero_orden: { type: string, example: OC-2026-000123 }
+        estado: { $ref: "#/components/schemas/EstadoOrden" }
+        proveedor_id: { type: integer }
+        sucursal_destino_id: { type: integer }
+        cliente_id: { type: integer, nullable: true }
+        cliente_nombre: { type: string, nullable: true }
+        fecha_necesaria: { type: string, format: date }
+        total: { type: number, format: double }
+        motivo_anulacion: { type: string, nullable: true }
+        conforme: { type: boolean, nullable: true }
+        observacion_cierre: { type: string, nullable: true }
+        detalle:
+          type: array
+          items: { $ref: "#/components/schemas/OrdenCompraDetalle" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        proveedor:
+          allOf:
+            - $ref: "#/components/schemas/Proveedor"
+          nullable: true
+          description: Presente solo si la request incluyo ?expand=proveedor; ausente en caso contrario.
+
+    AuditoriaEvento:
+      type: object
+      properties:
+        object: { type: string, enum: [auditoria_evento] }
+        id: { type: integer }
+        orden_compra_id: { type: integer }
+        estado_anterior: { $ref: "#/components/schemas/EstadoOrden" }
+        estado_nuevo: { $ref: "#/components/schemas/EstadoOrden" }
+        usuario_id: { type: integer }
+        observacion: { type: string, nullable: true }
+        fecha: { type: string, format: date-time }
+
+    EventoProveedor:
+      type: object
+      properties:
+        object: { type: string, enum: [evento_proveedor] }
+        id: { type: integer }
+        orden_compra_id: { type: integer }
+        tipo_evento: { $ref: "#/components/schemas/TipoEventoProveedor" }
+        observacion: { type: string, nullable: true }
+        fecha_evento: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    LineaTiempoItem:
+      type: object
+      description: Elemento combinado de auditoría interna o evento de proveedor, discriminado por "origen"
+      properties:
+        origen: { type: string, enum: [interno, proveedor] }
+        tipo: { type: string, description: "estado_nuevo si origen=interno, tipo_evento si origen=proveedor" }
+        observacion: { type: string, nullable: true }
+        fecha: { type: string, format: date-time }
+
+    ImportacionLoteResponse:
+      type: object
+      properties:
+        object: { type: string, enum: [importacion_lote] }
+        ordenes_creadas:
+          type: array
+          items:
+            type: object
+            properties:
+              referencia_lote: { type: string }
+              orden_id: { type: integer }
+              numero_orden: { type: string, example: OC-2026-000145 }
+        ordenes_rechazadas:
+          type: array
+          items:
+            type: object
+            properties:
+              referencia_lote: { type: string }
+              error:
+                type: object
+                properties:
+                  type: { type: string }
+                  code: { type: string }
+                  message: { type: string }
+                  param: { type: string, nullable: true }

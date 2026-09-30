@@ -1,0 +1,34 @@
+# cd compose && cp .env.example .env   (then edit)
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# Needs from .env: POSTGRES_PASSWORD, JWT_SECRET, DOMAIN (local.dev)
+services:
+  mailpit:
+    image: axllent/mailpit:v1.20
+    ports:
+      - "127.0.0.1:1025:1025" # SMTP, for a backend run from the host
+      - "127.0.0.1:8025:8025" # web UI/API, also at https://mail.local.dev
+    restart: unless-stopped
+
+  backend:
+    build: ../backend
+    depends_on:
+      mailpit:
+        condition: service_started
+    environment:
+      SPRING_MAIL_HOST: mailpit
+      SPRING_MAIL_PORT: 1025
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_URL: https://compras-api.${DOMAIN:?DOMAIN is required}
+
+  reverse-proxy:
+    depends_on:
+      mailpit:
+        condition: service_started
+    environment:
+      CADDY_LOCAL_CERTS: local_certs
+    volumes:
+      - ./Caddyfile.mail-dev:/etc/caddy/conf.d/mail.caddy:ro

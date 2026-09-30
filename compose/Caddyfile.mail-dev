@@ -1,0 +1,4 @@
+# Dev only: mounted into /etc/caddy/conf.d/ by docker-compose.dev.yml.
+mail.{$DOMAIN} {
+	reverse_proxy mailpit:8025
+}

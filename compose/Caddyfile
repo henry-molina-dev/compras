@@ -1,0 +1,30 @@
+# Single Caddyfile for dev and prod. Everything is driven by DOMAIN (from .env):
+#   dev:  DOMAIN=local.dev  -> compras.local.dev, compras-api.local.dev (+ mail.local.dev, see below)
+#   prod: DOMAIN=example.com -> compras.example.com, compras-api.example.com
+#
+# CADDY_LOCAL_CERTS is empty in prod (Let's Encrypt, automatic) and `local_certs` in dev
+# (docker-compose.dev.yml), which makes Caddy use its own local CA. .dev is a real public TLD,
+# so without it Caddy would try Let's Encrypt for local.dev names.
+#
+# Dev setup:
+#  - hosts file (Windows: C:\Windows\System32\drivers\etc\hosts, Linux/macOS: /etc/hosts):
+#      127.0.0.1 compras.local.dev compras-api.local.dev mail.local.dev
+#  - browsers warn until Caddy's local root CA is trusted. Export it with:
+#      docker compose cp reverse-proxy:/data/caddy/pki/authorities/local/root.crt .
+#    and install it in your OS/browser trust store.
+# Prod setup: DNS A records for both hosts (or a wildcard) must point to the Lightsail IP, and
+#  ports 80/443 (tcp) and 443 (udp) must be open in the Lightsail firewall.
+{
+	{$CADDY_LOCAL_CERTS:}
+}
+
+compras.{$DOMAIN} {
+	reverse_proxy frontend:80
+}
+
+compras-api.{$DOMAIN} {
+	reverse_proxy backend:8080
+}
+
+# Dev-only sites (the Mailpit block is mounted by docker-compose.dev.yml; absent in prod).
+import /etc/caddy/conf.d/*.caddy

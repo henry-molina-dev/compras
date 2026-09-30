@@ -1,0 +1,136 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* La app solo tiene tema claro: `dark:` responde a la clase .dark (nunca presente) y no al modo oscuro del SO. */
+@custom-variant dark (&:is(.dark *));
+
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --color-success: var(--success);
+    --color-success-soft: var(--success-soft);
+    --color-success-line: var(--success-line);
+    --color-success-ink: var(--success-ink);
+    --color-info: var(--info);
+    --color-info-soft: var(--info-soft);
+    --color-info-line: var(--info-line);
+    --color-info-ink: var(--info-ink);
+    --color-warning: var(--warning);
+    --color-warning-soft: var(--warning-soft);
+    --color-warning-line: var(--warning-line);
+    --color-warning-ink: var(--warning-ink);
+    --color-destructive-soft: var(--destructive-soft);
+    --color-destructive-line: var(--destructive-line);
+    --color-destructive-ink: var(--destructive-ink);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+    /* Paleta de la aplicacion: acento azul marino (#194F90) sobre grises calidos (stone). */
+    --background: #F5F5F4;
+    --foreground: #292524;
+    --card: #FFFFFF;
+    --card-foreground: #292524;
+    --popover: #FFFFFF;
+    --popover-foreground: #292524;
+    --primary: #194F90;
+    --primary-foreground: #FFFFFF;
+    --secondary: #FFFFFF;
+    --secondary-foreground: #292524;
+    --muted: #F5F5F4;
+    --muted-foreground: #78716C;
+    --accent: #EFF6FF;
+    --accent-foreground: #194F90;
+    --destructive: #DC2626;
+    --border: #E7E5E4;
+    --input: #D6D3D1;
+    --ring: #93C5FD;
+    /*
+     * Mensajes (avisos y toasts): cada tono tiene fondo (-soft), borde (-line) y texto (-ink).
+     * El color de la marca (primary/accent) NO se usa para mensajes: los avisos usan su propio
+     * color segun el significado. La informacion es celeste (sky), distinta del azul marino de la
+     * marca, y la advertencia es ambar.
+     */
+    --success: #16A34A;
+    --success-soft: #F0FDF4;
+    --success-line: #BBF7D0;
+    --success-ink: #166534;
+    --info: #0369A1;
+    --info-soft: #F0F9FF;
+    --info-line: #BAE6FD;
+    --info-ink: #0369A1;
+    --warning: #D97706;
+    --warning-soft: #FFFBEB;
+    --warning-line: #FCD34D;
+    --warning-ink: #92400E;
+    --destructive-soft: #FEF2F2;
+    --destructive-line: #FECACA;
+    --destructive-ink: #B91C1C;
+    --chart-1: #194F90;
+    --chart-2: #78716C;
+    --chart-3: #16A34A;
+    --chart-4: #2563EB;
+    --chart-5: #DC2626;
+    --radius: 0.5rem;
+    --sidebar: #FFFFFF;
+    --sidebar-foreground: #292524;
+    --sidebar-primary: #194F90;
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: #EFF6FF;
+    --sidebar-accent-foreground: #194F90;
+    --sidebar-border: #E7E5E4;
+    --sidebar-ring: #93C5FD;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground text-[15px];
+  }
+  html {
+    @apply font-sans;
+  }
+}
