@@ -16,6 +16,7 @@ Proyecto de demostración completo: API, base de datos, interfaz, pruebas y desp
 - [Reglas de negocio](#reglas-de-negocio)
 - [Roles y permisos](#roles-y-permisos)
 - [Integración del proveedor (webhook)](#integración-del-proveedor-webhook)
+- [Modelo de datos](#modelo-de-datos)
 - [Stack tecnológico](#stack-tecnológico)
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Levantar el proyecto en local](#levantar-el-proyecto-en-local)
@@ -116,6 +117,133 @@ curl -X POST https://compras-api.<dominio>/api/webhooks/eventos \
 ```
 
 Tipos de evento: `ACEPTADA`, `RECHAZADA`, `PREPARADA`, `DESPACHADA`, `ENTREGADA`. Una orden de otro proveedor responde 404, igual que una inexistente. Los eventos aparecen en la línea de tiempo de la orden, y `ENTREGADA` resalta para el comprador la acción de cerrarla.
+
+## Modelo de datos
+
+El esquema vive en las migraciones de Flyway (`backend/src/main/resources/db/migration/`), que son la única fuente de verdad; Hibernate solo valida que las entidades coincidan. El diagrama muestra las columnas principales (se omiten las de autoría `creado_por_id` / `modificado_por_id` y las fechas de creación y modificación).
+
+```mermaid
+erDiagram
+    SUCURSAL ||--o{ USUARIO : "gerente asignado"
+    SUCURSAL ||--o{ ORDEN_COMPRA : "destino"
+    PROVEEDOR ||--o{ ORDEN_COMPRA : "vende"
+    CLIENTE |o--o{ ORDEN_COMPRA : "solo Venta Directa"
+    USUARIO ||--o{ ORDEN_COMPRA : "crea"
+    ORDEN_COMPRA ||--|{ ORDEN_COMPRA_DETALLE : "lineas"
+    PRODUCTO ||--o{ ORDEN_COMPRA_DETALLE : "se compra en"
+    CATEGORIA_PRODUCTO ||--o{ PRODUCTO : "clasifica"
+    CATEGORIA_PRODUCTO ||--o{ FORMATO_CATEGORIA_PERMITIDA : "permitida en"
+    ORDEN_COMPRA ||--o{ ORDEN_COMPRA_AUDITORIA : "historial"
+    USUARIO ||--o{ ORDEN_COMPRA_AUDITORIA : "autor del cambio"
+    ORDEN_COMPRA ||--o{ ORDEN_EVENTO_PROVEEDOR : "eventos del proveedor"
+
+    USUARIO {
+        int id PK
+        varchar username UK
+        varchar password_hash
+        varchar rol "ADMIN, COMPRADOR, GERENTE_SUCURSAL"
+        int sucursal_id FK "solo gerentes"
+        boolean activo
+    }
+    SUCURSAL {
+        int id PK
+        varchar nombre
+        varchar formato "FERRETERIA, FERRETERIA_CONSTRUCCION, VENTA_DIRECTA"
+        boolean activo
+    }
+    FORMATO_CATEGORIA_PERMITIDA {
+        int id PK
+        varchar formato "regla formato a categoria"
+        int categoria_id FK
+    }
+    CATEGORIA_PRODUCTO {
+        int id PK
+        varchar nombre UK
+    }
+    PRODUCTO {
+        int id PK
+        varchar codigo UK
+        varchar nombre
+        int categoria_id FK
+        numeric precio "precio de catalogo"
+        varchar unidad_venta
+        varchar unidad_compra
+        numeric factor_conversion
+        boolean activo
+    }
+    PROVEEDOR {
+        int id PK
+        varchar nombre
+        varchar email
+        varchar webhook_api_key UK
+        numeric descuento_maximo_pct
+        numeric aumento_maximo_pct
+        boolean activo
+    }
+    CLIENTE {
+        int id PK
+        varchar nombre
+        varchar tipo "INDUSTRIAL, CONTRATISTA, COMERCIO"
+        varchar email
+        boolean activo
+    }
+    ORDEN_COMPRA {
+        int id PK
+        varchar numero_orden UK "OC-AAAA-NNNNNN"
+        int proveedor_id FK
+        int sucursal_destino_id FK
+        int cliente_id FK
+        int usuario_id FK "quien la crea"
+        varchar estado "CREADA, APROBADA, ANULADA, CERRADA"
+        date fecha_necesaria
+        numeric total "calculado por el servidor"
+        varchar motivo_anulacion
+        boolean conforme
+        varchar observacion_cierre
+    }
+    ORDEN_COMPRA_DETALLE {
+        int id PK
+        int orden_compra_id FK
+        int producto_id FK
+        numeric cantidad
+        numeric precio_catalogo "referencia congelada"
+        numeric precio_unitario "precio efectivo"
+        numeric subtotal
+    }
+    ORDEN_COMPRA_AUDITORIA {
+        int id PK
+        int orden_compra_id FK
+        varchar estado_anterior
+        varchar estado_nuevo
+        int usuario_id FK
+        varchar observacion
+        timestamp fecha
+    }
+    ORDEN_EVENTO_PROVEEDOR {
+        int id PK
+        int orden_compra_id FK
+        varchar tipo_evento "ACEPTADA, RECHAZADA, PREPARADA, DESPACHADA, ENTREGADA"
+        varchar observacion
+        timestamp fecha_evento
+    }
+    IDEMPOTENCY_KEY {
+        int id PK
+        varchar clave "UK junto con endpoint"
+        varchar endpoint
+        int status_code
+        text response_body
+    }
+    NUMERO_ORDEN_CONTADOR {
+        int anio PK
+        int ultimo_valor
+    }
+```
+
+Notas de lectura:
+
+- `FORMATO_CATEGORIA_PERMITIDA` no tiene clave foránea hacia `SUCURSAL`: relaciona el **valor** de `formato` con una categoría, y de ahí sale la regla "cada formato solo compra ciertas categorías".
+- `IDEMPOTENCY_KEY` y `NUMERO_ORDEN_CONTADOR` son tablas técnicas sin relaciones: la primera guarda las respuestas de las peticiones con `Idempotency-Key`; la segunda es el contador anual atómico del número de orden.
+- Los estados, roles y tipos son `VARCHAR` con restricción `CHECK`, no tipos enum de Postgres: agregar un valor requiere una migración nueva.
 
 ## Stack tecnológico
 
